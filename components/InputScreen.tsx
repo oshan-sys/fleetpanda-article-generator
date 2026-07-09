@@ -169,8 +169,8 @@ export default function InputScreen({
               </button>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              The doc must be shared with <span className="font-medium">"Anyone with the link"</span> (Share →
-              General access) so the server can read it.
+              Works with any doc your FleetPanda Google account has access to — it doesn't need to be publicly
+              shared.
             </p>
           </div>
         )}

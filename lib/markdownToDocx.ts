@@ -73,7 +73,7 @@ function buildTable(headerCells: string[], bodyRows: string[][]): Table {
         new TableCell({
           width: cellWidth,
           borders: cellBorders,
-          children: [new Paragraph({ children: parseInlineRuns(cell, { forceBold: true }) })],
+          children: [new Paragraph({ children: parseInlineRuns(cell, { forceBold: true, color: ACCENT_COLOR }) })],
         })
     ),
   });
@@ -104,10 +104,11 @@ export async function buildDocxFromMarkdown(markdown: string): Promise<Buffer> {
 
   const flushCallout = () => {
     if (calloutBuffer.length === 0) return;
+    // Callouts carry their own bold ALL-CAPS label (e.g. "**NOTE:**") from
+    // the model, which parseInlineRuns already renders bold — no per-type
+    // color-coding here, just a plain indented box so nothing but headings
+    // and table headers ever introduce color.
     const joined = detectCalloutText(calloutBuffer.join(" ").trim());
-    // Callouts aren't part of the current house style, but if one slips
-    // through, render it as a plain indented, italicized paragraph rather
-    // than introducing any color.
     children.push(
       new Paragraph({
         border: {
@@ -115,7 +116,7 @@ export async function buildDocxFromMarkdown(markdown: string): Promise<Buffer> {
         },
         spacing: { before: 160, after: 160 },
         indent: { left: 200, right: 200 },
-        children: parseInlineRuns(joined, { italics: true }),
+        children: parseInlineRuns(joined),
       })
     );
     calloutBuffer = [];

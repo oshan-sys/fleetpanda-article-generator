@@ -4,41 +4,14 @@ import type { ReactNode } from "react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-type CalloutKind = "warning" | "info" | "confirmation" | "default";
-
-const CALLOUT_CLASSES: Record<CalloutKind, string> = {
-  warning: "border-amber-400 bg-amber-50 text-amber-900",
-  info: "border-blue-400 bg-blue-50 text-blue-900",
-  confirmation: "border-emerald-400 bg-emerald-50 text-emerald-900",
-  default: "border-slate-300 bg-slate-50 text-slate-800",
-};
-
-function extractText(node: ReactNode): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractText).join("");
-  if (node && typeof node === "object" && "props" in node) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return extractText((node as any).props?.children);
-  }
-  return "";
-}
-
-function detectCalloutKind(text: string): CalloutKind {
-  const upper = text.toUpperCase();
-  if (upper.includes("WARNING")) return "warning";
-  if (upper.includes("CONFIRMATION")) return "confirmation";
-  if (upper.includes("INFO")) return "info";
-  return "default";
-}
-
+// Callout labels vary a lot in this house style (NOTE, QUICK TIP, PLEASE
+// NOTE, WHY IT MATTERS, SETUP NOTE, IF X FAILS, ...) — rather than
+// color-coding a fixed keyword list, every callout gets one neutral
+// treatment; the bold ALL-CAPS label the model writes is what stands out.
 const components: Components = {
   blockquote({ children }: { children?: ReactNode } & ExtraProps) {
-    const kind = detectCalloutKind(extractText(children));
     return (
-      <blockquote
-        className={`not-prose my-4 rounded-md border-l-4 px-4 py-3 text-sm leading-relaxed ${CALLOUT_CLASSES[kind]}`}
-      >
+      <blockquote className="not-prose my-4 rounded-md border-l-4 border-slate-300 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-800">
         {children}
       </blockquote>
     );
@@ -53,7 +26,7 @@ interface MarkdownPreviewProps {
 export default function MarkdownPreview({ markdown, className }: MarkdownPreviewProps) {
   return (
     <div
-      className={`prose prose-slate max-w-none prose-headings:font-semibold prose-h1:text-[#e96b2c] prose-h2:mt-8 prose-h2:text-lg prose-h2:text-[#e96b2c] prose-table:text-sm ${className ?? ""}`}
+      className={`prose prose-slate max-w-none prose-headings:font-semibold prose-h1:text-[#e96b2c] prose-h2:mt-8 prose-h2:text-lg prose-h2:text-[#e96b2c] prose-h3:text-base prose-table:text-sm ${className ?? ""}`}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {markdown || "*Nothing to preview yet.*"}

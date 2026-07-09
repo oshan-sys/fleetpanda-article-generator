@@ -1,6 +1,18 @@
 import Groq from "groq-sdk";
 import { NextRequest } from "next/server";
-import { DEFAULT_STYLE_PROMPT, MAX_DOCUMENT_CHARS, MAX_OUTPUT_TOKENS, MODEL_ID } from "@/lib/constants";
+import { splitIntoChunks } from "@/lib/chunking";
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  CONDENSATION_SYSTEM_PROMPT,
+  CONDENSE_CHUNK_MAX_CHARS,
+  CONDENSE_OUTPUT_TOKENS,
+  DEFAULT_STYLE_PROMPT,
+  MAX_DOCUMENT_CHARS,
+  MAX_OUTPUT_TOKENS,
+  MODEL_ID,
+  SINGLE_PASS_MAX_CHARS,
+} from "@/lib/constants";
+import { waitForGroqTokenBudget } from "@/lib/groqRateLimit";
 import type { GenerateRequestBody } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,6 +26,34 @@ function sseLine(event: string, data: unknown): string {
 // lookup later without touching the rest of the route.
 function getApiKey(): string | undefined {
   return process.env.GROQ_API_KEY;
+}
+
+function estimateTokens(chars: number): number {
+  return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
+}
+
+/** Condenses one chunk of a large document down to customer-relevant notes. */
+async function condenseChunk(
+  client: Groq,
+  chunk: string,
+  index: number,
+  total: number
+): Promise<{ text: string; headers: Headers }> {
+  const { data, response } = await client.chat.completions
+    .create({
+      model: MODEL_ID,
+      max_completion_tokens: CONDENSE_OUTPUT_TOKENS,
+      messages: [
+        { role: "system", content: CONDENSATION_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `This is part ${index + 1} of ${total} of the internal 102 document.\n\n<document_part>\n${chunk}\n</document_part>`,
+        },
+      ],
+    })
+    .withResponse();
+
+  return { text: (data.choices[0]?.message?.content ?? "").trim(), headers: response.headers };
 }
 
 export async function POST(req: NextRequest) {
@@ -52,8 +92,6 @@ export async function POST(req: NextRequest) {
   }
 
   const client = new Groq({ apiKey });
-  const userMessage = `Here is the internal 102 document to convert:\n\n<document>\n${sourceText}\n</document>`;
-
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -67,6 +105,56 @@ export async function POST(req: NextRequest) {
       });
 
       try {
+        let finalDocumentText = sourceText;
+
+        // Documents too big for a single request first go through a
+        // condense-then-generate pipeline: each chunk gets distilled down
+        // to customer-relevant notes (a much shorter prompt than the full
+        // style guide, so each chunk can be far bigger), then the combined
+        // notes are run through the normal generation step below.
+        if (sourceText.length > SINGLE_PASS_MAX_CHARS) {
+          const chunks = splitIntoChunks(sourceText, CONDENSE_CHUNK_MAX_CHARS);
+          const condensedParts: string[] = [];
+          let lastHeaders: Headers | null = null;
+
+          for (let i = 0; i < chunks.length; i++) {
+            send("progress", { stage: "condensing", current: i + 1, total: chunks.length });
+
+            if (lastHeaders) {
+              const neededTokens =
+                estimateTokens(CONDENSATION_SYSTEM_PROMPT.length) +
+                estimateTokens(chunks[i].length) +
+                CONDENSE_OUTPUT_TOKENS +
+                50;
+              await waitForGroqTokenBudget(lastHeaders, neededTokens);
+            }
+
+            const { text, headers } = await condenseChunk(client, chunks[i], i, chunks.length);
+            condensedParts.push(text);
+            lastHeaders = headers;
+          }
+
+          let condensedText = condensedParts.join("\n\n---\n\n");
+          // Rare fallback: if condensation didn't shrink enough (e.g. a
+          // very dense document), still cap it so the final call stays
+          // within budget rather than erroring out.
+          if (condensedText.length > SINGLE_PASS_MAX_CHARS) {
+            condensedText = condensedText.slice(0, SINGLE_PASS_MAX_CHARS);
+          }
+
+          send("progress", { stage: "writing" });
+
+          if (lastHeaders) {
+            const neededTokens =
+              estimateTokens(styleInstructions.length) + estimateTokens(condensedText.length) + MAX_OUTPUT_TOKENS + 50;
+            await waitForGroqTokenBudget(lastHeaders, neededTokens);
+          }
+
+          finalDocumentText = condensedText;
+        }
+
+        const userMessage = `Here is the internal 102 document to convert:\n\n<document>\n${finalDocumentText}\n</document>`;
+
         const groqStream = await client.chat.completions.create({
           model: MODEL_ID,
           max_completion_tokens: MAX_OUTPUT_TOKENS,
